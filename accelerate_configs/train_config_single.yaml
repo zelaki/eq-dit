@@ -1,0 +1,8 @@
+compute_environment: LOCAL_MACHINE
+distributed_type: NO
+num_machines: 1
+machine_rank: 0
+num_processes: 1  # Number of GPUs (processes)
+use_cpu: false
+gpu_ids: "7"  # The specific GPU IDs to use
+

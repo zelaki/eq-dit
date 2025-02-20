@@ -1,0 +1,7 @@
+[[34m2025-02-20 08:54:05[0m] Experiment directory created at results_equi/007-DiT-B-2
+[[34m2025-02-20 08:54:08[0m] DiT Parameters: 130,512,416
+[[34m2025-02-20 08:54:10[0m] Dataset contains 1,281,168 images (/data/imagenet/feats)
+[[34m2025-02-20 08:54:13[0m] Training for 1400 epochs...
+[[34m2025-02-20 08:54:13[0m] Beginning epoch 0...
+[[34m2025-02-20 08:54:26[0m] (step=0000100) Train Loss: 0.3310, Train Steps/Sec: 8.18
+[[34m2025-02-20 08:54:36[0m] (step=0000200) Train Loss: 0.0410, Train Steps/Sec: 9.81
