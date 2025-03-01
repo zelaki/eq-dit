@@ -1,0 +1,2 @@
+# accelerate launch   --mixed_precision fp16 train.py --model DiT-B/2 --vae ema --feature-path /data/imagenet/feats  --ckpt-every 50000   --results-dir results 
+accelerate launch   --mixed_precision fp16 train.py --model DiT-B/2 --vae ema --feature-path /data/imagenet/feats  --ckpt-every 50000   --results-dir results --scale-equi True

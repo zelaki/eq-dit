@@ -14,6 +14,7 @@ import torch.nn as nn
 import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
+import torch.nn.functional as F
 
 
 def modulate(x, shift, scale):
@@ -157,7 +158,7 @@ class DiT(nn.Module):
         mlp_ratio=4.0,
         class_dropout_prob=0.1,
         num_classes=1000,
-        learn_sigma=True,
+        learn_sigma=False,
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
@@ -236,7 +237,7 @@ class DiT(nn.Module):
             return outputs
         return ckpt_forward
 
-    def forward(self, x, t, y):
+    def forward(self, x, t, y, scale=1):
         """
         Forward pass of DiT.
         x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
@@ -247,7 +248,20 @@ class DiT(nn.Module):
         t = self.t_embedder(t)                   # (N, D)
         y = self.y_embedder(y, self.training)    # (N, D)
         c = t + y                                # (N, D)
-        for block in self.blocks:
+
+        bs = x.shape[0]
+        for block_idx, block in enumerate(self.blocks):
+
+
+            if  block_idx == 4 and scale != 1:
+                x = x.view(x.shape[0], 16, 16, x.shape[2])
+                x = x.permute(0, 3, 1, 2)
+                x = F.interpolate(x, scale_factor=scale, mode='bilinear', align_corners=False)
+                x = x.permute(0, 2, 3, 1)  # shape: (2, 8, 8, 1152)
+                x = x.reshape(bs, int((16*scale)**2), 768)
+
+
+
             x = torch.utils.checkpoint.checkpoint(self.ckpt_wrapper(block), x, c)       # (N, T, D)
         x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)                   # (N, out_channels, H, W)

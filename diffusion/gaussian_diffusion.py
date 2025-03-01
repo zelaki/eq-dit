@@ -5,11 +5,12 @@
 
 
 import math
-
+import random
 import numpy as np
 import torch as th
 import enum
-import random
+import torch.nn.functional as F
+
 from .diffusion_utils import discretized_gaussian_log_likelihood, normal_kl
 
 
@@ -170,7 +171,6 @@ class GaussianDiffusion:
         assert (betas > 0).all() and (betas <= 1).all()
 
         self.num_timesteps = int(betas.shape[0])
-
         alphas = 1.0 - betas
         self.alphas_cumprod = np.cumprod(alphas, axis=0)
         self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])
@@ -680,7 +680,7 @@ class GaussianDiffusion:
                 img = out["sample"]
 
     def _vb_terms_bpd(
-            self, model, x_start, x_t, t, clip_denoised=True, model_kwargs=None, rot=0
+            self, model, x_start, x_t, t, clip_denoised=True, model_kwargs=None
     ):
         """
         Get a term for the variational lower-bound.
@@ -693,10 +693,6 @@ class GaussianDiffusion:
         true_mean, _, true_log_variance_clipped = self.q_posterior_mean_variance(
             x_start=x_start, x_t=x_t, t=t
         )
-        if rot != 0:
-            true_mean = th.rot90(true_mean, k=rot, dims=[-1, -2])
-            true_log_variance_clipped = th.rot90(true_log_variance_clipped, k=rot, dims=[-1, -2])
-
         out = self.p_mean_variance(
             model, x_t, t, clip_denoised=clip_denoised, model_kwargs=model_kwargs
         )
@@ -716,7 +712,7 @@ class GaussianDiffusion:
         output = th.where((t == 0), decoder_nll, kl)
         return {"output": output, "pred_xstart": out["pred_xstart"]}
 
-    def training_losses(self, model, x_start, t, model_kwargs=None, noise=None, rot_equi=False):
+    def training_losses(self, model, x_start, t, model_kwargs=None, noise=None, scale_equi=False):
         """
         Compute training losses for a single timestep.
         :param model: the model to evaluate loss on.
@@ -736,12 +732,6 @@ class GaussianDiffusion:
 
         terms = {}
 
-        if rot_equi:
-            rots = [0, 0, 0, 1, 2, 3]
-            rot_angle = random.choice(rots)
-            x_t = th.rot90(x_t, k=rot_angle, dims=[-1, -2])
-
-
         if self.loss_type == LossType.KL or self.loss_type == LossType.RESCALED_KL:
             terms["loss"] = self._vb_terms_bpd(
                 model=model,
@@ -750,12 +740,18 @@ class GaussianDiffusion:
                 t=t,
                 clip_denoised=False,
                 model_kwargs=model_kwargs,
-                rot_equi=rot_equi
             )["output"]
             if self.loss_type == LossType.RESCALED_KL:
                 terms["loss"] *= self.num_timesteps
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
-            model_output = model(x_t, t, **model_kwargs)
+
+
+            if scale_equi:
+                scale = random.choice([0.5, 0.75, 1, 1])
+                noise = F.interpolate(noise, scale_factor=scale, mode='bilinear', align_corners=False)
+            else:
+                scale = 1
+            model_output = model(x_t, t, scale=scale, **model_kwargs)
 
             if self.model_var_type in [
                 ModelVarType.LEARNED,
@@ -773,12 +769,13 @@ class GaussianDiffusion:
                     x_t=x_t,
                     t=t,
                     clip_denoised=False,
-                    # rot_equi=rot_equi
                 )["output"]
                 if self.loss_type == LossType.RESCALED_MSE:
                     # Divide by 1000 for equivalence with initial implementation.
                     # Without a factor of 1/1000, the VB term hurts the MSE term.
                     terms["vb"] *= self.num_timesteps / 1000.0
+
+            
 
             target = {
                 ModelMeanType.PREVIOUS_X: self.q_posterior_mean_variance(
@@ -787,16 +784,12 @@ class GaussianDiffusion:
                 ModelMeanType.START_X: x_start,
                 ModelMeanType.EPSILON: noise,
             }[self.model_mean_type]
-            assert model_output.shape == target.shape == x_start.shape
+            # assert model_output.shape == target.shape == x_start.shape
 
 
-            if rot_equi:
-                target = th.rot90(target, k=rot_angle, dims=[-1, -2])
 
 
             terms["mse"] = mean_flat((target - model_output) ** 2)
-
-
             if "vb" in terms:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:
