@@ -136,6 +136,12 @@ def main(args):
         experiment_index = len(glob(f"{args.results_dir}/*"))
         model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
         experiment_dir = f"{args.results_dir}/{experiment_index:03d}-{model_string_name}"  # Create an experiment folder
+        if args.learn_sigma == False:
+            experiment_dir += "-wo_learn_sigma"
+
+        if args.scale_equi:
+            experiment_dir += "-scale_equi"
+
         checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
         os.makedirs(checkpoint_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
@@ -146,13 +152,16 @@ def main(args):
     latent_size = args.image_size // 8
     model = DiT_models[args.model](
         input_size=latent_size,
-        num_classes=args.num_classes
+        num_classes=args.num_classes,
+        learn_sigma=args.learn_sigma
     )
+
+
     # Note that parameter initialization is done within the DiT constructor
     model = model.to(device)
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, False)
-    diffusion = create_diffusion(timestep_respacing="")  # default: 1000 steps, linear noise schedule
+    diffusion = create_diffusion(timestep_respacing="", learn_sigma=args.learn_sigma)  # default: 1000 steps, linear noise schedule
     vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
     if accelerator.is_main_process:
         logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -199,7 +208,7 @@ def main(args):
             y = y.squeeze(dim=1)
             t = torch.randint(0, diffusion.num_timesteps, (x.shape[0],), device=device)
             model_kwargs = dict(y=y)
-            loss_dict = diffusion.training_losses(model, x, t, model_kwargs, rot_equi=args.rot_equi)
+            loss_dict = diffusion.training_losses(model, x, t, model_kwargs, scale_equi=args.scale_equi)
             loss = loss_dict["loss"].mean()
             opt.zero_grad()
             accelerator.backward(loss)
@@ -238,6 +247,10 @@ def main(args):
                     torch.save(checkpoint, checkpoint_path)
                     logger.info(f"Saved checkpoint to {checkpoint_path}")
 
+            if train_steps == 400_000:
+                exit(1)
+
+
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
     
@@ -254,8 +267,9 @@ if __name__ == "__main__":
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--epochs", type=int, default=1400)
-    parser.add_argument("--rot-equi", type=bool, default=False)
+    parser.add_argument("--scale-equi", type=bool, default=False)
 
+    parser.add_argument("--learn-sigma", type=bool, default=False)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)
     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
